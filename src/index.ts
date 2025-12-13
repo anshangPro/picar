@@ -101,6 +101,7 @@ export function apply(ctx: Context, config: any) {
   }
 
   ctx.command('好图.随机 <arg1>', '随机获取一张好图')
+    .alias('picar rand <arg1>')
     .action(async (argv, arg1) => {
       var condition = arg1 && `${arg1}`.trim() !== '' && !arg1.startsWith('<') 
         ? { tag: arg1 } 
@@ -118,6 +119,7 @@ export function apply(ctx: Context, config: any) {
     })
 
   ctx.command('好图.看 <arg1> [page]', '列出某标签下的所有好图')
+    .alias('picar see <arg1> [page]')
     .action(async (argv, arg1, page) => {
       if (!arg1 || `${arg1}`.trim() === '' || arg1.startsWith('<')) {
         return `你是坏图，请使用 "好图 看 &lt;标签名&gt; [页码]"`
@@ -160,6 +162,7 @@ export function apply(ctx: Context, config: any) {
     })
 
   ctx.command('好图.列表', '列出所有好图标签')
+    .alias('picar list')
     .action(async (argv) => {
       const rows = await await ctx.database.get(tagTableName, {}, ['tag'])
       const distinctTags = Array.from(new Set(rows.map(row => row.tag)))
@@ -181,6 +184,7 @@ export function apply(ctx: Context, config: any) {
     })
 
   ctx.command('好图.添加 <arg1>', '什么 有好图 快收！')
+    .alias('picar add <arg1>')
     .action(async (argv, arg1) => {
       if (!arg1 || `${arg1}`.trim() === '' || arg1.startsWith('<')) {
         return `你是坏图，请使用 "好图 添加 &lt;标签名&gt;"`

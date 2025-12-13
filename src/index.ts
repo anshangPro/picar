@@ -70,8 +70,7 @@ export function apply(ctx: Context, config: any) {
     id: 'unsigned',
     tag: {
       type: 'string',
-      unique: true,  // 标签唯一
-    },
+      },
   }, {
     autoInc: true,
   })

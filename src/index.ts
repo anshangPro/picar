@@ -264,6 +264,9 @@ export async function apply(ctx: Context, config: any) {
       if (jsonInput.startsWith('faker')) {
         jsonInput = jsonInput.slice(5).trim();
       }
+      if (jsonInput.startsWith('/faker')) {
+        jsonInput = jsonInput.slice(6).trim();
+      }
       // 获取所有的<img />标签
       const regex = /<img\s+[^>]*src=["']([^"']+)["'][^>]*file=["']([^"']+)["'][^>]*>/gi;
       let match;

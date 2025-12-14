@@ -1,9 +1,8 @@
 import { Context, Schema, h } from 'koishi'
 import { promises as fs } from 'fs'
 import { resolve, join, extname, basename, dirname } from 'path'
-import { file } from '@satorijs/element/jsx-runtime'
-import { dir } from 'console'
-import { pathToFileURL } from 'url'
+import { } from '@koishijs/plugin-help'
+
 
 
 export const name = 'picar'
@@ -165,30 +164,17 @@ export async function apply(ctx: Context, config: any) {
       const messages = await Promise.all(
         paginatedRows.map(async (row, index) => {
           var url = row.img_url;
-          if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            // 读取本地文件内容并转换为 base64
-            try {
-              const fileBuffer = await fs.readFile(url.replace('file://', ''));
-              const base64Data = fileBuffer.toString('base64');
-              const mimeType = extname(url).slice(1).toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
-              return h('message', {}, [
-                h('author', { id: session.userId, nickname: session.username }),
-                h.image(`data:${mimeType};base64,${base64Data}`),
-              ]);
-            } catch (error) {
-              ctx.logger.error('读取本地文件失败:', error);
-            }
-          }
+          const imgBody = await getImage(url, ctx.logger);
           return h('message', {}, [
-            h('author', { id: session.userId, nickname: session.username }),
-            h.image(row.img_url),
+            h('author', { id: session.userId, name: session.username }),
+            imgBody,
           ]);
         })
       );
 
       const pageInfo = `\n【第 ${pageNum}/${totalPages} 页，共 ${rows.length} 张图片】\n${pageNum < totalPages ? `查看下一页：好图 看 ${arg1} ${pageNum + 1}` : '已是最后一页'}`
       messages.push(h('message', {}, [
-        h('author', { id: session.userId, nickname: session.username }),
+        h('author', { id: session.userId, name: session.username }),
         h.text(pageInfo)
       ]))
 
@@ -218,29 +204,27 @@ export async function apply(ctx: Context, config: any) {
     })
 
   ctx.command('好图.添加 <arg1>', '什么 有好图 快收！')
+    .alias('图来', { args: [] })
     .alias('picar.add <arg1>')
     .action(async (argv, arg1) => {
       if (!arg1 || `${arg1}`.trim() === '' || arg1.startsWith('<')) {
         return `你是坏图，请使用 "好图 添加 &lt;标签名&gt;"`
       }
 
-      // ctx.logger.info(`argv 结构:`, JSON.stringify(argv, null, 2))
       let quote = argv.session.quote
-      ctx.logger.info(`quote 结构:`, JSON.stringify(quote, null, 2))
       let imgs = []
       if (quote) {
         for (let element of quote.elements) {
           if (element.type === 'img') {
-            const imgSrc = await downloadImage(element.attrs.src, element.attrs.file, ctx.logger)
+            const imgSrc = await downloadImage(element.attrs.src, element.attrs.file, ctx.logger, argv.session.bot)
             imgs.push(imgSrc)
           }
         }
       }
       for (let element of argv.session.elements) {
         if (element.type === 'img') {
-          const imgSrc = await downloadImage(element.attrs.src, element.attrs.file, ctx.logger)
+          const imgSrc = await downloadImage(element.attrs.src, element.attrs.file, ctx.logger, argv.session.bot)
           imgs.push(imgSrc)
-          ctx.logger.info(`检测到图片: ${imgSrc}`)
         }
       }
 
@@ -252,7 +236,6 @@ export async function apply(ctx: Context, config: any) {
       const existingTags = await ctx.database.get(tagTableName, { tag: arg1 })
       if (existingTags.length === 0) {
         await ctx.database.create(tagTableName, { tag: arg1 })
-        ctx.logger.info(`新增标签: ${arg1}`)
       }
 
       // 批量插入图片
@@ -271,6 +254,68 @@ export async function apply(ctx: Context, config: any) {
       return msg
     })
 
+  ctx.command('faker', 'faker!', { hidden: true, authority: 4 })
+    .action(async (argv) => {
+      const session = argv.session;
+      // 获取 JSON 输入
+      const rawInput = session.content; 
+      var jsonInput = rawInput.trim();
+      // 去除开头的faker指令部分
+      if (jsonInput.startsWith('faker')) {
+        jsonInput = jsonInput.slice(5).trim();
+      }
+      // 获取所有的<img />标签
+      const regex = /<img\s+[^>]*src=["']([^"']+)["'][^>]*file=["']([^"']+)["'][^>]*>/gi;
+      let match;
+      const imgUrls = [];
+      while ((match = regex.exec(jsonInput)) !== null) {
+        imgUrls.push(await downloadImage(match[1], match[2], ctx.logger, argv.session.bot));
+      }
+      // 替换掉所有的<img />标签
+      jsonInput = jsonInput.replace(regex, '');
+
+      // 计算图片占位符数量
+      const imgPlaceholderCount = (jsonInput.match(/{img}/g) || []).length;
+      // 如果图片数量少于占位符数量，返回错误信息
+      if (imgUrls.length < imgPlaceholderCount) {
+        return `图片数量不足，至少需要 ${imgPlaceholderCount} 张图片，但只提供了 ${imgUrls.length} 张。`;
+      }
+
+
+      let parsedData;
+      try {
+        parsedData = JSON.parse(jsonInput);
+      } catch (error) {
+        ctx.logger.error('JSON 解析失败:', error);
+        return '输入的 JSON 格式不正确，请检查后重试。';
+      }
+
+      // 填充消息内容
+      const messages = await Promise.all(parsedData.map(async (item, index) => {
+        let content = item.content;
+        const imgPlaceholders = content.split('{img}');
+        let msgBody: any[] = [h('author', { id: item.author, name: item.nickname })];
+        ctx.logger.error('imgPlaceholders:', imgPlaceholders);
+        await Promise.all(
+          imgPlaceholders.map(async (segment, i) => {
+            msgBody.push(segment);
+            if (i < imgPlaceholders.length - 1) {
+              if (imgUrls.length > 0) {
+                msgBody.push(await getImage(imgUrls[0], ctx.logger)); // 插入图片
+                imgUrls.shift(); // 使用后移除该图片链接
+              } else {
+                ctx.logger.warn('图片链接不足，无法插入图片');
+              }
+            }
+          })
+        );
+
+        return h('message', {}, msgBody);
+      }));
+
+      // 返回转发消息
+      return h('message', { forward: true }, messages);
+    });
 }
 
 async function ensureDirectoryExists(filePath: string, logger) {
@@ -281,9 +326,22 @@ async function ensureDirectoryExists(filePath: string, logger) {
   }
 }
 
-async function downloadImage(url: string, img_name: string, logger): Promise<string> {
+async function downloadImage(url: string, img_name: string, logger, bot): Promise<string> {
+  const onebotUrl = (await bot.internal.getImage(img_name))['file'];
+  if (onebotUrl) {
+    return `onebot://${onebotUrl}`;
+  }
+  
   try {
     const destPath = resolve(process.cwd(), 'data', 'picar', img_name)
+    //如果文件已存在，则直接返回路径
+    try {
+      await fs.access(destPath)
+      return destPath
+    } catch (e) {
+      //文件不存在，继续下载
+    }
+
     const res = await fetch(url, {
       headers:
         { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36' }
@@ -298,7 +356,23 @@ async function downloadImage(url: string, img_name: string, logger): Promise<str
   }
 }
 
-
+async function getImage(url: string, logger): Promise<ReturnType<typeof h.image>> {
+  if (url.startsWith('onebot://')) {
+    return h.image(url.replace('onebot://', ''));
+  }
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    // 读取本地文件内容并转换为 base64
+    try {
+      const fileBuffer = await fs.readFile(url.replace('file://', ''));
+      const base64Data = fileBuffer.toString('base64');
+      const mimeType = extname(url).slice(1).toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
+      return h.image(`data:${mimeType};base64,${base64Data}`);
+    } catch (error) {
+      logger.error('读取本地文件失败:', error);
+    }
+  }
+  return h.image(url);
+}
 
 // reference: https://github.com/Koishi-Plugin/best-jrrp/blob/main/src/msgbuilder.ts#L142
 /**

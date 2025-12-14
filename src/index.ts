@@ -1,6 +1,10 @@
 import { Context, Schema, h } from 'koishi'
 import { promises as fs } from 'fs'
-import { resolve, join, extname, basename } from 'path'
+import { resolve, join, extname, basename, dirname } from 'path'
+import { file } from '@satorijs/element/jsx-runtime'
+import { dir } from 'console'
+import { pathToFileURL } from 'url'
+
 
 export const name = 'picar'
 
@@ -52,13 +56,16 @@ export interface PicarTag {
   tag: string
 }
 
-export function apply(ctx: Context, config: any) {
+export async function apply(ctx: Context, config: any) {
+  await ensureDirectoryExists(resolve(process.cwd(), 'data', 'picar'), ctx.logger)
+  ctx.logger.info('Picar plugin initialized.' + resolve(process.cwd(), 'data', 'picar'))
+
   // 扩展数据库表结构（如果表不存在会自动创建）
   ctx.model.extend(tableName, {
     id: 'unsigned',
     tag: 'string',
     img_url: 'text',
-    uploader: 'string', 
+    uploader: 'string',
     uploaderId: 'unsigned',
     upload_time: 'timestamp',
   }, {
@@ -70,12 +77,12 @@ export function apply(ctx: Context, config: any) {
     id: 'unsigned',
     tag: {
       type: 'string',
-      },
+    },
   }, {
     autoInc: true,
   })
 
-   ctx.command('好图', '显示好图命令的帮助页面')
+  ctx.command('好图', '显示好图命令的帮助页面')
     .action(() => {
       return `好图命令帮助页面：
 - 好图 随机 <标签名>：随机获取一张指定标签的图片
@@ -102,8 +109,8 @@ export function apply(ctx: Context, config: any) {
   ctx.command('好图.随机 <arg1>', '随机获取一张好图')
     .alias('picar rand <arg1>')
     .action(async (argv, arg1) => {
-      var condition = arg1 && `${arg1}`.trim() !== '' && !arg1.startsWith('<') 
-        ? { tag: arg1 } 
+      var condition = arg1 && `${arg1}`.trim() !== '' && !arg1.startsWith('<')
+        ? { tag: arg1 }
         : {}
 
       const rows = await ctx.database.get(tableName, condition, ['img_url'])
@@ -111,8 +118,20 @@ export function apply(ctx: Context, config: any) {
         return `没有找到图片，请先添加图片`
       }
 
-      const randomIndex = Math.floor(Math.random() * rows.length)
-      const imgUrl = rows[randomIndex].img_url
+      const randomIndex = Math.floor(Math.random() * rows.length);
+      let imgUrl = rows[randomIndex].img_url;
+
+      if (!imgUrl.startsWith('http://') && !imgUrl.startsWith('https://')) {
+        try {
+          const fileBuffer = await fs.readFile(imgUrl);
+          const base64Data = fileBuffer.toString('base64');
+          const mimeType = extname(imgUrl).slice(1).toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
+          imgUrl = `data:${mimeType};base64,${base64Data}`;
+        } catch (error) {
+          ctx.logger.error('读取本地文件失败:', error);
+          return '无法读取本地图片文件';
+        }
+      }
 
       return `<image src="${imgUrl}"/>`
     })
@@ -132,7 +151,7 @@ export function apply(ctx: Context, config: any) {
       const pageSize = 10
       const pageNum = Math.max(1, parseInt(page as any) || 1)
       const totalPages = Math.ceil(rows.length / pageSize)
-      
+
       if (pageNum > totalPages) {
         return `页码 ${pageNum} 超出范围，共 ${totalPages} 页`
       }
@@ -143,13 +162,29 @@ export function apply(ctx: Context, config: any) {
 
       let session = argv.session
 
-      const messages = paginatedRows.map((row, index) => 
-        h('message', {}, [
-          h('author', { id: session.userId, nickname: session.username }),
-          h.image(row.img_url),
-          // h.text(`图片 ${startIndex + index + 1}/${rows.length}`)
-        ])
-      )
+      const messages = await Promise.all(
+        paginatedRows.map(async (row, index) => {
+          var url = row.img_url;
+          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            // 读取本地文件内容并转换为 base64
+            try {
+              const fileBuffer = await fs.readFile(url.replace('file://', ''));
+              const base64Data = fileBuffer.toString('base64');
+              const mimeType = extname(url).slice(1).toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
+              return h('message', {}, [
+                h('author', { id: session.userId, nickname: session.username }),
+                h.image(`data:${mimeType};base64,${base64Data}`),
+              ]);
+            } catch (error) {
+              ctx.logger.error('读取本地文件失败:', error);
+            }
+          }
+          return h('message', {}, [
+            h('author', { id: session.userId, nickname: session.username }),
+            h.image(row.img_url),
+          ]);
+        })
+      );
 
       const pageInfo = `\n【第 ${pageNum}/${totalPages} 页，共 ${rows.length} 张图片】\n${pageNum < totalPages ? `查看下一页：好图 看 ${arg1} ${pageNum + 1}` : '已是最后一页'}`
       messages.push(h('message', {}, [
@@ -191,18 +226,21 @@ export function apply(ctx: Context, config: any) {
 
       // ctx.logger.info(`argv 结构:`, JSON.stringify(argv, null, 2))
       let quote = argv.session.quote
+      ctx.logger.info(`quote 结构:`, JSON.stringify(quote, null, 2))
       let imgs = []
       if (quote) {
         for (let element of quote.elements) {
           if (element.type === 'img') {
-            imgs.push(element.attrs.src)
+            const imgSrc = await downloadImage(element.attrs.src, element.attrs.file, ctx.logger)
+            imgs.push(imgSrc)
           }
         }
       }
       for (let element of argv.session.elements) {
         if (element.type === 'img') {
-          imgs.push(element.attrs.src)
-          ctx.logger.info(`检测到图片: ${element.attrs.src}`)
+          const imgSrc = await downloadImage(element.attrs.src, element.attrs.file, ctx.logger)
+          imgs.push(imgSrc)
+          ctx.logger.info(`检测到图片: ${imgSrc}`)
         }
       }
 
@@ -218,21 +256,46 @@ export function apply(ctx: Context, config: any) {
       }
 
       // 批量插入图片
-    const uploader = argv.session.username || '未知用户'
-    const uploaderId = Number(argv.session.userId) || 0
-    const uploadTime = new Date()
-    await ctx.database.upsert(tableName, imgs.map(url => ({
-      tag: arg1,
-      img_url: url,
-      uploader,
-      uploaderId: Number(uploaderId),
-      upload_time: uploadTime,
-    })))
+      const uploader = argv.session.username || '未知用户'
+      const uploaderId = Number(argv.session.userId) || 0
+      const uploadTime = new Date()
+      await ctx.database.upsert(tableName, imgs.map(url => ({
+        tag: arg1,
+        img_url: url,
+        uploader,
+        uploaderId: Number(uploaderId),
+        upload_time: uploadTime,
+      })))
 
       const msg = `好图已加入 ${arg1}，共 ${imgs.length} 张图片`
       return msg
     })
 
+}
+
+async function ensureDirectoryExists(filePath: string, logger) {
+  try {
+    await fs.mkdir(filePath, { recursive: true });
+  } catch (err) {
+    logger.error('Failed to create directory:', err);
+  }
+}
+
+async function downloadImage(url: string, img_name: string, logger): Promise<string> {
+  try {
+    const destPath = resolve(process.cwd(), 'data', 'picar', img_name)
+    const res = await fetch(url, {
+      headers:
+        { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36' }
+    })
+    if (!res.ok) throw new Error(`请求失败: ${res.status}`)
+    const buffer = Buffer.from(await res.arrayBuffer())
+    await fs.writeFile(destPath, buffer)
+    return destPath
+  } catch (e) {
+    logger.error('图片下载失败:', e)
+    return ''
+  }
 }
 
 

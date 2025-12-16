@@ -2,6 +2,7 @@ import { Context, Schema, h } from 'koishi'
 import { promises as fs } from 'fs'
 import { resolve, join, extname, basename, dirname } from 'path'
 import { } from '@koishijs/plugin-help'
+import { image } from '@satorijs/element/jsx-runtime'
 
 
 
@@ -120,19 +121,8 @@ export async function apply(ctx: Context, config: any) {
       const randomIndex = Math.floor(Math.random() * rows.length);
       let imgUrl = rows[randomIndex].img_url;
 
-      if (!imgUrl.startsWith('http://') && !imgUrl.startsWith('https://')) {
-        try {
-          const fileBuffer = await fs.readFile(imgUrl);
-          const base64Data = fileBuffer.toString('base64');
-          const mimeType = extname(imgUrl).slice(1).toLowerCase() === 'png' ? 'image/png' : 'image/jpeg';
-          imgUrl = `data:${mimeType};base64,${base64Data}`;
-        } catch (error) {
-          ctx.logger.error('读取本地文件失败:', error);
-          return '无法读取本地图片文件';
-        }
-      }
-
-      return `<image src="${imgUrl}"/>`
+      const imgBody = await getImage(imgUrl, ctx.logger);
+      return imgBody;
     })
 
   ctx.command('好图.看 <arg1> [page]', '列出某标签下的所有好图')

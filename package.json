@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-picar",
   "description": "A plugin to send random picture",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "main": "lib/index.js",
   "contributes": [
     "AnshangPro <anshangpro@outlook.com>"

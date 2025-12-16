@@ -284,27 +284,30 @@ export async function apply(ctx: Context, config: any) {
       }
 
       // 填充消息内容
-      const messages = await Promise.all(parsedData.map(async (item, index) => {
+      var imgCnt = 0
+      const messages = [];
+      for (const item of parsedData) {
         let content = item.content;
         const imgPlaceholders = content.split('{img}');
-        let msgBody: any[] = [h('author', { id: item.author, name: item.nickname })];
+        let msgBody = [h('author', { id: item.author, name: item.nickname })];
         ctx.logger.error('imgPlaceholders:', imgPlaceholders);
-        await Promise.all(
-          imgPlaceholders.map(async (segment, i) => {
-            msgBody.push(segment);
-            if (i < imgPlaceholders.length - 1) {
-              if (imgUrls.length > 0) {
-                msgBody.push(await getImage(imgUrls[0], ctx.logger)); // 插入图片
-                imgUrls.shift(); // 使用后移除该图片链接
-              } else {
-                ctx.logger.warn('图片链接不足，无法插入图片');
-              }
-            }
-          })
-        );
 
-        return h('message', {}, msgBody);
-      }));
+        for (let i = 0; i < imgPlaceholders.length; i++) {
+          const segment = imgPlaceholders[i];
+          msgBody.push(segment);
+          if (i < imgPlaceholders.length - 1) {
+            if (imgUrls.length > imgCnt) {
+              ctx.logger.error('Inserting image:', imgUrls, ' at index ', imgCnt);
+              msgBody.push(await getImage(imgUrls[imgCnt], ctx.logger)); // 插入图片
+              imgCnt++; // 使用后增加计数器
+            } else {
+              ctx.logger.warn('图片链接不足，无法插入图片');
+            }
+          }
+        }
+
+        messages.push(h('message', {}, msgBody));
+      }
 
       // 返回转发消息
       return h('message', { forward: true }, messages);
@@ -470,4 +473,31 @@ async function replacePixivPlaceholders(template: string, url: string, logger): 
     return { pattern: m[0], content }
   }))
   return replacements.reduce((result, { pattern, content }) => result.replace(pattern, content), template)
+}
+
+
+class Lock {
+  private queue: (() => void)[]; // Declare queue as an array of functions
+  private locked: boolean; // Declare locked as a boolean
+
+  constructor() {
+    this.queue = [];
+    this.locked = false;
+  }
+
+  async acquire() {
+    if (this.locked) {
+      await new Promise<void>((resolve) => this.queue.push(() => resolve()));
+    }
+    this.locked = true;
+  }
+
+  release() {
+    if (this.queue.length > 0) {
+      const next = this.queue.shift();
+      next(); // 唤醒下一个等待的任务
+    } else {
+      this.locked = false;
+    }
+  }
 }

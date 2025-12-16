@@ -290,14 +290,11 @@ export async function apply(ctx: Context, config: any) {
         let content = item.content;
         const imgPlaceholders = content.split('{img}');
         let msgBody = [h('author', { id: item.author, name: item.nickname })];
-        ctx.logger.error('imgPlaceholders:', imgPlaceholders);
-
         for (let i = 0; i < imgPlaceholders.length; i++) {
           const segment = imgPlaceholders[i];
           msgBody.push(segment);
           if (i < imgPlaceholders.length - 1) {
             if (imgUrls.length > imgCnt) {
-              ctx.logger.error('Inserting image:', imgUrls, ' at index ', imgCnt);
               msgBody.push(await getImage(imgUrls[imgCnt], ctx.logger)); // 插入图片
               imgCnt++; // 使用后增加计数器
             } else {
